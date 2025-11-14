@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gillass Token Mini App</title>
+    <script src="https://cdn.jsdelivr.net/npm/web3@1.7.4/dist/web3.min.js"></script>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background: #f0f0f0; }
+        .container { max-width: 600px; margin: auto; text-align: center; }
+        input, button { margin: 10px; padding: 10px; font-size: 16px; }
+        button { background: #007bff; color: white; border: none; cursor: pointer; }
+        button:hover { background: #0056b3; }
+        #status { color: red; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Gillass Token</h1>
+        <div>
+            <label>Token Amount to Buy:</label>
+            <input type="number" id="tokenAmount" placeholder="Enter token amount">
+        </div>
+        <div>
+            <label>Referrer Address (optional):</label>
+            <input type="text" id="referrer" placeholder="Enter referrer address">
+        </div>
+        <button onclick="buyTokens()">Buy Tokens</button>
+        <div>
+            <label>Token Amount to Sell:</label>
+            <input type="number" id="sellAmount" placeholder="Enter token amount">
+        </div>
+        <button onclick="approveAndSellTokens()">Sell Tokens</button>
+        <button onclick="claimVested()">Claim Vested Tokens</button>
+        <div>
+            <label>Current Price: <span id="currentPrice">Loading...</span> BNB</label>
+        </div>
+        <div>
+            <label>Your Vested Tokens: <span id="vestedAmount">Loading...</span></label>
+        </div>
+        <div id="status"></div>
+    </div>
+
+    <script>
+        const contractAddress = '0x72e835B583AB52a4C5b4efFBdf09EE3F63636303'; // آدرس قرارداد
+        const abi = [
+            {
+                "inputs": [
+                    {"name": "tokenAmount", "type": "uint256"},
+                    {"name": "referrer", "type": "address"}
+                ],
+                "name": "buyTokens",
+                "outputs": [],
+                "stateMutability": "payable",
+                "type": "function"
+            },
+            {
+                "inputs": [
+                    {"name": "tokenAmount", "type": "uint256"}
+                ],
+                "name": "sellTokens",
+                "outputs": [],
+                "stateMutability": "nonpayable",
+                "type": "function"
+            },
+            {
+                "inputs": [],
+                "name": "claimVested",
+                "outputs": [],
+                "stateMutability": "nonpayable",
+                "type": "function"
+            },
+            {
+                "inputs": [],
+                "name": "getCurrentPrice",
+                "outputs": [{"name": "", "type": "uint256"}],
+                "stateMutability": "view",
+                "type": "function"
+            },
+            {
+                "inputs": [{"name": "owner", "type": "address"}],
+                "name": "vestings",
+                "outputs": [
+                    {"name": "totalAmount", "type": "uint256"},
+                    {"name": "released", "type": "uint256"},
+                    {"name": "start", "type": "uint256"},
+                    {"name": "fixedRewardClaimed", "type": "uint256"}
+                ],
+                "stateMutability": "view",
+                "type": "function"
+            },
+            {
+                "inputs": [
+                    {"name": "spender", "type": "address"},
+                    {"name": "amount", "type": "uint256"}
+                ],
+                "name": "approve",
+                "outputs": [{"name": "", "type": "bool"}],
+                "stateMutability": "nonpayable",
+                "type": "function"
+            }
+        ];
+
+        let web3, contract, userAddress;
+
+        async function init() {
+            if (window.ethereum) {
+                web3 = new Web3(window.ethereum);
+                await window.ethereum.request({ method: 'eth_requestAccounts' });
+                userAddress = (await web3.eth.getAccounts())[0];
+                contract = new web3.eth.Contract(abi, contractAddress);
+                updatePrice();
+                updateVestedAmount();
+            } else {
+                document.getElementById('status').innerText = 'Please install MetaMask or use a Web3-compatible browser';
+            }
+        }
+
+        async function updatePrice() {
+            try {
+                const price = await contract.methods.getCurrentPrice().call();
+                document.getElementById('currentPrice').innerText = web3.utils.fromWei(price, 'ether');
+            } catch (error) {
+                document.getElementById('status').innerText = 'Error fetching price: ' + error.message;
+            }
+        }
+
+        async function updateVestedAmount() {
+            try {
+                const vesting = await contract.methods.vestings(userAddress).call();
+                document.getElementById('vestedAmount').innerText = web3.utils.fromWei(vesting.totalAmount - vesting.released, 'ether');
+            } catch (error) {
+                document.getElementById('status').innerText = 'Error fetching vested amount: ' + error.message;
+            }
+        }
+
+        async function buyTokens() {
+            const tokenAmount = document.getElementById('tokenAmount').value;
+            const referrer = document.getElementById('referrer').value || '0x0000000000000000000000000000000000000000';
+            if (!tokenAmount || tokenAmount <= 0) {
+                document.getElementById('status').innerText = 'Please enter a valid token amount';
+                return;
+            }
+
+            try {
+                const price = await contract.methods.getCurrentPrice().call();
+                const requiredPayment = (BigInt(tokenAmount) * BigInt(price)) / BigInt(10**18);
+                await contract.methods.buyTokens(tokenAmount, referrer).send({
+                    from: userAddress,
+                    value: requiredPayment.toString()
+                });
+                document.getElementById('status').innerText = 'Purchase successful!';
+                updatePrice();
+                updateVestedAmount();
+            } catch (error) {
+                document.getElementById('status').innerText = 'Error: ' + error.message;
+            }
+        }
+
+        async function approveAndSellTokens() {
+            const tokenAmount = document.getElementById('sellAmount').value;
+            if (!tokenAmount || tokenAmount <= 0) {
+                document.getElementById('status').innerText = 'Please enter a valid token amount';
+                return;
+            }
+
+            try {
+                await contract.methods.approve(contractAddress, tokenAmount).send({ from: userAddress });
+                await contract.methods.sellTokens(tokenAmount).send({ from: userAddress });
+                document.getElementById('status').innerText = 'Sale successful!';
+                updatePrice();
+                updateVestedAmount();
+            } catch (error) {
+                document.getElementById('status').innerText = 'Error: ' + error.message;
+            }
+        }
+
+        async function claimVested() {
+            try {
+                await contract.methods.claimVested().send({ from: userAddress });
+                document.getElementById('status').innerText = 'Vested tokens claimed!';
+                updateVestedAmount();
+            } catch (error) {
+                document.getElementById('status').innerText = 'Error: ' + error.message;
+            }
+        }
+
+        // Initialize Telegram WebApp
+        window.Telegram.WebApp.ready();
+        init();
+    </script>
+</body>
+</html>
